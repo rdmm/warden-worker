@@ -6,6 +6,8 @@ Warden es un servidor compatible con Bitwarden diseñado para ejecutarse en **Cl
 
 ## 1. Para Desarrolladores: Entendiendo el Proyecto
 
+> 💡 **Nota para principiantes:** Esta primera sección explica cómo está programada la aplicación por dentro y es **muy técnica**. Si no sabes de programación o solo quieres instalar tu propio servidor para guardar tus contraseñas, **puedes saltarte toda esta sección e ir directamente al Punto 2 (Guía de Despliegue)**.
+
 Warden no utiliza código de Vaultwarden; es una implementación independiente y mínima en Rust (compilado a WebAssembly) y JavaScript, pensada para funcionar dentro de los límites computacionales de la capa gratuita de Cloudflare.
 
 ### 1.1 Arquitectura General
@@ -49,16 +51,105 @@ El sistema se compone de varios servicios de Cloudflare:
 
 ---
 
-## 2. Guía de Despliegue para Usuarios
+## 2. Guía de Despliegue (Instalación) para Usuarios
 
-Puedes desplegar Warden de dos maneras: manualmente a través de la interfaz de comandos (CLI) o de forma automatizada mediante GitHub Actions (recomendado para producción).
+Aquí te explicaremos paso a paso cómo crear tu propio servidor de contraseñas. Puedes hacerlo de dos formas: usando botones en la web (Opción 1, recomendada para todos) o usando comandos en la pantalla negra de tu computadora (Opción 2, solo para expertos).
 
-### 2.1 Requisitos Previos
+### Requisitos Previos (Para ambas opciones)
 
-- Una cuenta de [Cloudflare](https://dash.cloudflare.com).
-- Node.js y la herramienta `wrangler` instalada si vas a usar CLI.
+- Necesitarás crearte una cuenta gratuita en **[Cloudflare](https://dash.cloudflare.com)** (la empresa de servidores de internet que alojará tus contraseñas).
+- Necesitarás una cuenta gratuita en **[GitHub](https://github.com)** (la página donde está guardado el código de este programa).
 
-### 2.2 Opción 1: Despliegue Manual (CLI)
+---
+
+### Opción 1: Instalación Automática desde la Web (Recomendada)
+
+Esta es la mejor opción. Funciona como si tuvieras "un robot" que hace todo el trabajo pesado de instalación y actualizaciones por ti cada vez que aprietas un botón, directamente desde internet.
+
+Para que este "robot" (llamado GitHub Actions) pueda entrar a tu cuenta de Cloudflare a construirte el servidor, tienes que darle unas "llaves de acceso" y decirle cómo se llaman las cosas. Vamos a buscar esos datos paso a paso.
+
+#### Paso A: Buscar tus datos en Cloudflare
+
+Inicia sesión en tu panel de control de Cloudflare ([dash.cloudflare.com](https://dash.cloudflare.com/)). Vamos a buscar cuatro cosas:
+
+**1. Tu ID de cuenta (`CLOUDFLARE_ACCOUNT_ID`)**
+*   **¿Qué es?** Es tu número de cliente. Le dice al robot a qué cuenta debe ir.
+*   **¿Dónde lo encuentro?**
+    1. En el panel principal de Cloudflare, haz clic en "Workers & Pages" en el menú de la izquierda.
+    2. Mira a la derecha de la pantalla. Busca un número largo con letras debajo de donde dice "Account ID" (ID de cuenta).
+    3. Haz clic en "Click to copy" (clic para copiar) y guárdalo en un bloc de notas por ahora.
+
+**2. Tu llave secreta del robot (`CLOUDFLARE_API_TOKEN`)**
+*   **¿Qué es?** Es una contraseña larguísima que autoriza al robot a tocar ciertas cosas de tu cuenta.
+*   **¿Dónde lo encuentro?**
+    1. Haz clic en el icono de tu perfil arriba a la derecha y selecciona "My Profile" (Mi Perfil).
+    2. En el menú de la izquierda, selecciona "API Tokens".
+    3. Haz clic en el botón azul "Create Token" (Crear Token).
+    4. Busca la plantilla que se llama "Edit Cloudflare Workers" y haz clic en "Use template".
+    5. **Muy importante:** En la sección que dice "Permissions" (Permisos), verás uno que dice "Workers:Edit". Debes añadir otro permiso para que el robot pueda crear la base de datos: Haz clic en "+ Add more", y en las tres cajitas selecciona "Account", luego "D1", y por último "Edit".
+    6. Baja hasta el final y haz clic en "Continue to summary" y luego en "Create Token".
+    7. **Copia el texto gigante que aparece en pantalla.** Esta es tu llave secreta. Guárdala en tu bloc de notas. *Nota: Cloudflare no te la volverá a mostrar nunca más, así que no cierres la ventana o guárdala bien por ahora.*
+
+**3. Tu base de datos y su ID (`D1_DATABASE_ID`)**
+*   **¿Qué es?** La base de datos es la "caja fuerte virtual" vacía donde se guardarán todas tus contraseñas. D1 es simplemente el nombre que Cloudflare le da a sus cajas fuertes. Necesitamos crear una vacía y anotar su número identificador.
+*   **¿Dónde lo encuentro?**
+    1. Vuelve a la página principal de Cloudflare, menú de la izquierda, y ve a "Storage & databases" -> "D1".
+    2. Haz clic en "Create database" (Crear base de datos).
+    3. Escribe un nombre, por ejemplo: `warden-db` y pulsa Create.
+    4. En la pantalla que aparece, busca la sección "Database ID" (ID de base de datos) y copia esos números y letras. Pégalos en tu bloc de notas.
+
+**4. Opcional: Disco duro para archivos adjuntos (`R2_NAME`)**
+*   **¿Qué es?** Si quieres poder guardar fotos o documentos PDF junto con tus contraseñas, necesitas "R2" (un disco duro en la nube). Si no haces esto, Warden limitará el tamaño de los archivos que puedes subir.
+*   **¿Dónde lo encuentro?**
+    1. En el panel izquierdo de Cloudflare, ve a "Storage & databases" -> "R2".
+    2. (Si es tu primera vez, Cloudflare te pedirá que pongas una tarjeta de crédito para poder usar R2. Aunque es gratis para usuarios normales, lo piden para evitar abusos).
+    3. Haz clic en "Create bucket" (Crear cubo o carpeta).
+    4. Escribe un nombre inventado por ti (en minúsculas), por ejemplo: `warden-archivos` y créalo.
+    5. Ese nombre exacto (`warden-archivos`) es el dato que necesitas guardar en tu bloc de notas.
+
+#### Paso B: Entregarle las llaves al Robot (GitHub)
+
+Ahora nos vamos a mudar de página: entra a [GitHub.com](https://github.com).
+
+1.  Busca el botón que dice **"Fork"** en la parte superior derecha de esta página. Hacer un "Fork" es como decir "quiero una copia de todo este código guardada en mi cuenta para usarla yo mismo". Sigue las instrucciones para hacer la copia.
+2.  Una vez hecha la copia, estarás en tu propia versión del código. Ve a la pestaña de **Settings** (Configuración, arriba a la derecha).
+3.  En el menú de la izquierda, busca **"Secrets and variables"** y luego haz clic en **"Actions"**.
+4.  Aquí vamos a esconder nuestras llaves. Haz clic en el botón verde **"New repository secret"** y agrega estos valores uno a uno (los que tienes en tu bloc de notas):
+    *   Casilla `Name`: Escribe `CLOUDFLARE_ACCOUNT_ID` — Casilla `Secret`: Pega tu ID de cuenta. Pulsa "Add secret".
+    *   Casilla `Name`: Escribe `CLOUDFLARE_API_TOKEN` — Casilla `Secret`: Pega tu llave larga. Pulsa "Add secret".
+    *   Casilla `Name`: Escribe `D1_DATABASE_ID` — Casilla `Secret`: Pega el ID de tu base de datos. Pulsa "Add secret".
+    *   *(Si hiciste el paso opcional de R2)* Casilla `Name`: Escribe `R2_NAME` — Casilla `Secret`: Pega el nombre que inventaste (ej. `warden-archivos`). Pulsa "Add secret".
+
+#### Paso C: ¡Encender el Robot!
+
+1. Ve a la pestaña **Actions** en la parte superior de tu página de GitHub.
+2. Si te sale un mensaje de advertencia verde, haz clic en "I understand my workflows, go ahead and enable them" (Entiendo cómo funciona, adelante).
+3. En la lista de la izquierda, haz clic en **"Deploy Prod"**.
+4. A la derecha, verás un botón que dice **"Run workflow"**. Haz clic ahí, y luego en el botón verde que aparece.
+5. El robot acaba de empezar a trabajar. Verás un circulito amarillo girando. En unos 2 o 3 minutos, si todo sale bien, se pondrá en verde. ¡Felicidades, el servidor ya está instalado en internet!
+
+#### Paso D: Claves Maestras Finales (Muy Importante)
+
+Tu servidor está vivo, pero ahora mismo está bloqueado por seguridad. Necesita saber quién eres tú y crear contraseñas maestras invisibles para que nadie más pueda entrar.
+
+Debes volver una última vez a [Cloudflare](https://dash.cloudflare.com/):
+
+1. Ve a "Workers & Pages" en el menú de la izquierda.
+2. ¡Allí aparecerá tu servidor! Probablemente se llame `warden-worker`. Haz clic sobre él.
+3. Ve a la pestaña **Settings** (Configuración) y en el menú de más a la izquierda busca **Variables and Secrets**.
+4. En la sección "Secrets" (Secretos), vas a añadir tres configuraciones (haz clic en "Add" para cada una):
+
+*   `ALLOWED_EMAILS` : Escribe el correo electrónico que vas a usar para registrarte (ej. `mi-correo@gmail.com`). Esto impide que extraños se registren en tu servidor.
+*   `JWT_SECRET` : Inventa una contraseña larguísima y aporrea el teclado (ej. `a98db25kasjdhk234jhlkj`). Esto no te lo pedirá nunca el teléfono; sirve para que el servidor cree inicios de sesión seguros por debajo.
+*   `JWT_REFRESH_SECRET` : Aporrea el teclado otra vez y escribe algo diferente a lo anterior.
+
+**Si no guardas estas tres variables, tu aplicación de Bitwarden te dará error al intentar crear tu cuenta.**
+
+---
+
+### Opción 2: Instalación Manual (Solo para expertos en la Terminal)
+
+Si eres desarrollador y prefieres hacerlo localmente con la herramienta de comandos `wrangler`:
 
 1.  **Clonar el repositorio**:
     ```bash
@@ -70,10 +161,9 @@ Puedes desplegar Warden de dos maneras: manualmente a través de la interfaz de 
     ```bash
     wrangler d1 create warden-db
     ```
-    *Wrangler te devolverá un `database_id`. Guárdalo.*
 
 3.  **Configurar el ID de la base de datos**:
-    Crea un archivo `.env` en la raíz del proyecto (¡no lo subas a git!) con el siguiente contenido:
+    Crea un archivo `.env` en la raíz del proyecto con el siguiente contenido:
     ```
     D1_DATABASE_ID="tu-database-id-aqui"
     ```
@@ -82,10 +172,10 @@ Puedes desplegar Warden de dos maneras: manualmente a través de la interfaz de 
     ```bash
     wrangler r2 bucket create warden-attachments
     ```
-    Luego, descomenta la configuración de R2 en el archivo `wrangler.toml`. Si no haces esto, los adjuntos se guardarán en KV (con límite de 25MB).
+    Luego, descomenta la configuración de R2 en el archivo `wrangler.toml`.
 
-5.  **Descargar el Frontend (Web Vault)**:
-    Ejecuta estos comandos en tu terminal para descargar la interfaz web de Vaultwarden:
+5.  **Descargar el Frontend (La página web)**:
+    Ejecuta estos comandos en tu terminal para descargar la interfaz gráfica:
     ```bash
     export BW_WEB_VERSION="v2025.12.0"
     wget "https://github.com/dani-garcia/bw_web_builds/releases/download/${BW_WEB_VERSION}/bw_web_${BW_WEB_VERSION}.tar.gz"
@@ -96,94 +186,16 @@ Puedes desplegar Warden de dos maneras: manualmente a través de la interfaz de 
 
 6.  **Inicializar la base de datos y Desplegar**:
     ```bash
-    # Crear las tablas iniciales
+    # Crear las tablas en la nube
     wrangler d1 execute vault1 --file sql/schema.sql --remote
 
-    # Aplicar posibles migraciones
+    # Aplicar actualizaciones de esquema si existen
     wrangler d1 migrations apply vault1 --remote
 
-    # Desplegar a Cloudflare
+    # Subir código a Cloudflare
     wrangler deploy
     ```
-
-### 2.3 Opción 2: Despliegue Automático con CI/CD (GitHub Actions)
-
-Esta es la mejor opción para asegurar que tu servidor esté siempre actualizado de forma sencilla y segura en la nube, sin necesidad de usar herramientas locales.
-
-Para que GitHub Actions pueda crear y actualizar los recursos en tu cuenta de Cloudflare, necesita autorización e identificadores.
-
-#### Paso a paso para conseguir los datos en Cloudflare
-
-Primero, inicia sesión en tu panel de control de Cloudflare ([dash.cloudflare.com](https://dash.cloudflare.com/)).
-
-**1. Obtener el `CLOUDFLARE_ACCOUNT_ID`**
-*   **¿Qué es y para qué sirve?** Es el identificador único de tu cuenta. Permite a GitHub saber exactamente en qué cuenta de Cloudflare debe crear la aplicación.
-*   **¿Dónde lo encuentro?**
-    1. En el panel principal de Cloudflare, haz clic en "Workers & Pages" en el menú de la izquierda.
-    2. Mira la barra lateral derecha. Busca la sección que dice "Account ID" o "ID de cuenta".
-    3. Haz clic en "Click to copy" para copiar la cadena de letras y números.
-
-**2. Obtener el `CLOUDFLARE_API_TOKEN`**
-*   **¿Qué es y para qué sirve?** Es una contraseña (token) especial que le da permiso a GitHub para hacer cambios en tu nombre, pero limitados solo a lo necesario (crear base de datos y actualizar el código del Worker).
-*   **¿Dónde lo encuentro?**
-    1. Haz clic en el icono de tu perfil arriba a la derecha y selecciona "My Profile" (Mi Perfil).
-    2. En el menú izquierdo, selecciona "API Tokens".
-    3. Haz clic en el botón azul "Create Token" (Crear Token).
-    4. Busca la plantilla "Edit Cloudflare Workers" y haz clic en "Use template" (Usar plantilla).
-    5. **Muy importante:** En la sección "Permissions", además del que ya viene por defecto ("Workers:Edit"), debes agregar otro haciendo clic en "+ Add more". Elige "Account" (Cuenta) -> "D1" -> "Edit" (Editar).
-    6. (Opcional) Si quieres usar R2 para archivos adjuntos, agrega un tercer permiso: "Account" -> "Workers R2 Storage" -> "Edit".
-    7. En "Account Resources" y "Zone Resources" selecciona tu cuenta y dominio respectivo o "All accounts" si prefieres.
-    8. Haz clic en "Continue to summary" y luego en "Create Token".
-    9. **Copia el token que se muestra en pantalla.** Esta es la única vez que podrás verlo completo.
-
-**3. Crear la base de datos y obtener el `D1_DATABASE_ID`**
-*   **¿Qué es y para qué sirve?** D1 es la base de datos SQL de Cloudflare. Necesitamos crear la base de datos vacía primero y obtener su ID para decirle a nuestra app "guarda todos los usuarios y contraseñas aquí".
-*   **¿Dónde lo encuentro?**
-    1. Vuelve al panel principal, menú de la izquierda, y ve a "Storage & databases" (Almacenamiento y bases de datos) -> "D1".
-    2. Haz clic en "Create database" (Crear base de datos).
-    3. Ponle un nombre, por ejemplo: `warden-db` (o "vault1") y pulsa Create.
-    4. En la pantalla de la base de datos, entra a ella. Busca la sección "Database ID" (ID de base de datos) y copia ese valor.
-
-**4. (Opcional) Crear bucket de R2 y configurar `R2_NAME`**
-*   **¿Qué es y para qué sirve?** Si subes un archivo (ej. una foto o un PDF) a tu gestor de contraseñas, R2 es el disco duro en la nube que lo guardará. Es más rápido y permite archivos más grandes que KV.
-*   **¿Dónde lo encuentro?**
-    1. En el panel izquierdo, ve a "Storage & databases" -> "R2".
-    2. Si es tu primera vez, Cloudflare te pedirá activar R2 (requiere registrar un método de pago, aunque la capa gratuita es muy amplia).
-    3. Haz clic en "Create bucket" (Crear bucket).
-    4. Escribe un nombre único, por ejemplo: `warden-attachments` y créalo.
-    5. El nombre que escribiste (`warden-attachments`) es tu `R2_NAME`.
-
-#### Cómo configurar estos secretos en GitHub y desplegar
-
-Ahora que tienes los datos, vamos a automatizar el despliegue:
-
-1.  Haz un "Fork" de este repositorio a tu cuenta personal de GitHub (arriba a la derecha, botón "Fork").
-2.  Ve a tu nuevo repositorio en GitHub, y navega a **Settings > Secrets and variables > Actions**.
-3.  Haz clic en el botón verde **"New repository secret"** para agregar cada uno de estos datos, uno por uno:
-    *   `Name:` `CLOUDFLARE_ACCOUNT_ID` — `Secret:` Pega tu ID de cuenta.
-    *   `Name:` `CLOUDFLARE_API_TOKEN` — `Secret:` Pega tu token.
-    *   `Name:` `D1_DATABASE_ID` — `Secret:` Pega el ID de tu base de datos D1.
-    *   *(Opcional)* `Name:` `R2_NAME` — `Secret:` Pega el nombre exacto de tu bucket (ej. `warden-attachments`).
-4.  Una vez guardados los secretos, ve a la pestaña **Actions** en tu repositorio de GitHub.
-5.  Si te pide permiso para activar las acciones, haz clic en "I understand my workflows, go ahead and enable them".
-6.  En la barra lateral izquierda, selecciona "Deploy Prod".
-7.  Haz clic a la derecha en "Run workflow", y vuelve a presionar el botón verde "Run workflow".
-8.  Espera unos minutos hasta que termine con éxito. ¡El servidor ya estará desplegado en Cloudflare!
-
-### 2.4 Variables de Entorno Fundamentales (Después de Desplegar)
-
-Una vez que GitHub Actions finalizó el despliegue con éxito, el servidor existe en la nube, pero todavía necesita claves de seguridad maestras para funcionar y generar las sesiones de los usuarios.
-
-Debes entrar nuevamente a [Cloudflare](https://dash.cloudflare.com/):
-
-1. Ve a "Workers & Pages".
-2. Haz clic sobre tu Worker recién desplegado (probablemente se llame `warden-worker`).
-3. Ve a la pestaña **Settings** (Configuración) y en el menú lateral de configuración selecciona **Variables and Secrets**.
-4. En la sección "Secrets", haz clic en "Add" para agregar las siguientes variables:
-
-*   `ALLOWED_EMAILS`: ¿Quién puede registrarse? (ej. escribe `tu@email.com` si solo la usas tú, o `*@tudominio.com` si tienes un dominio propio para tu familia/empresa). Protege el servidor de registros públicos indeseados.
-*   `JWT_SECRET`: Una cadena de texto aleatoria muy larga e impredecible (ej. `a98db25...`). Sirve para cifrar y firmar los tokens de sesión; si alguien no tiene esto, no puede generar accesos válidos.
-*   `JWT_REFRESH_SECRET`: Otra cadena de texto aleatoria y larga distinta a la anterior. Sirve para renovar las sesiones de forma segura sin tener que volver a ingresar la contraseña maestra.
+    (No olvides configurar los Secrets finales `ALLOWED_EMAILS`, `JWT_SECRET` y `JWT_REFRESH_SECRET` mediante la terminal o el panel web).
 
 > **Importante:** Si no configuras estas tres variables y guardas los cambios en Cloudflare, el servidor no iniciará y la app móvil/web dará un error.
 
