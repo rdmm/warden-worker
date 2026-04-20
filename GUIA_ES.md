@@ -108,26 +108,84 @@ Puedes desplegar Warden de dos maneras: manualmente a través de la interfaz de 
 
 ### 2.3 Opción 2: Despliegue Automático con CI/CD (GitHub Actions)
 
-Esta es la mejor opción para asegurar que tu servidor esté siempre actualizado fácilmente.
+Esta es la mejor opción para asegurar que tu servidor esté siempre actualizado de forma sencilla y segura en la nube, sin necesidad de usar herramientas locales.
 
-1.  Haz un "Fork" de este repositorio a tu cuenta de GitHub.
-2.  En tu repositorio en GitHub, ve a **Settings > Secrets and variables > Actions**.
-3.  Añade los siguientes **Secrets** obligatorios:
-    *   `CLOUDFLARE_ACCOUNT_ID`: Tu ID de cuenta de Cloudflare (se ve en el panel lateral derecho de Cloudflare).
-    *   `CLOUDFLARE_API_TOKEN`: Un token con permisos para editar Workers, D1 y KV/R2. (Se crea en tu perfil de Cloudflare).
-    *   `D1_DATABASE_ID`: El ID de la base de datos que creaste en Cloudflare.
-4.  Si usas R2 para archivos adjuntos, crea el bucket en Cloudflare y añade un secret llamado `R2_NAME` con el nombre del bucket.
-5.  Ve a la pestaña **Actions** en tu repositorio, selecciona "Deploy Prod" y pulsa **Run workflow**.
+Para que GitHub Actions pueda crear y actualizar los recursos en tu cuenta de Cloudflare, necesita autorización e identificadores.
 
-### 2.4 Variables de Entorno Fundamentales
+#### Paso a paso para conseguir los datos en Cloudflare
 
-Una vez desplegado el worker, **debes configurar estas variables de entorno en el panel de Cloudflare** (Workers & Pages > Tu Worker > Settings > Variables and Secrets) como secretos:
+Primero, inicia sesión en tu panel de control de Cloudflare ([dash.cloudflare.com](https://dash.cloudflare.com/)).
 
-*   `ALLOWED_EMAILS`: Quién puede registrarse (ej. `tu@email.com` o `*@tudominio.com`).
-*   `JWT_SECRET`: Una cadena de texto aleatoria y larga para firmar sesiones.
-*   `JWT_REFRESH_SECRET`: Otra cadena de texto aleatoria y larga.
+**1. Obtener el `CLOUDFLARE_ACCOUNT_ID`**
+*   **¿Qué es y para qué sirve?** Es el identificador único de tu cuenta. Permite a GitHub saber exactamente en qué cuenta de Cloudflare debe crear la aplicación.
+*   **¿Dónde lo encuentro?**
+    1. En el panel principal de Cloudflare, haz clic en "Workers & Pages" en el menú de la izquierda.
+    2. Mira la barra lateral derecha. Busca la sección que dice "Account ID" o "ID de cuenta".
+    3. Haz clic en "Click to copy" para copiar la cadena de letras y números.
 
-> **Importante:** Si no configuras estas tres variables, el servidor fallará.
+**2. Obtener el `CLOUDFLARE_API_TOKEN`**
+*   **¿Qué es y para qué sirve?** Es una contraseña (token) especial que le da permiso a GitHub para hacer cambios en tu nombre, pero limitados solo a lo necesario (crear base de datos y actualizar el código del Worker).
+*   **¿Dónde lo encuentro?**
+    1. Haz clic en el icono de tu perfil arriba a la derecha y selecciona "My Profile" (Mi Perfil).
+    2. En el menú izquierdo, selecciona "API Tokens".
+    3. Haz clic en el botón azul "Create Token" (Crear Token).
+    4. Busca la plantilla "Edit Cloudflare Workers" y haz clic en "Use template" (Usar plantilla).
+    5. **Muy importante:** En la sección "Permissions", además del que ya viene por defecto ("Workers:Edit"), debes agregar otro haciendo clic en "+ Add more". Elige "Account" (Cuenta) -> "D1" -> "Edit" (Editar).
+    6. (Opcional) Si quieres usar R2 para archivos adjuntos, agrega un tercer permiso: "Account" -> "Workers R2 Storage" -> "Edit".
+    7. En "Account Resources" y "Zone Resources" selecciona tu cuenta y dominio respectivo o "All accounts" si prefieres.
+    8. Haz clic en "Continue to summary" y luego en "Create Token".
+    9. **Copia el token que se muestra en pantalla.** Esta es la única vez que podrás verlo completo.
+
+**3. Crear la base de datos y obtener el `D1_DATABASE_ID`**
+*   **¿Qué es y para qué sirve?** D1 es la base de datos SQL de Cloudflare. Necesitamos crear la base de datos vacía primero y obtener su ID para decirle a nuestra app "guarda todos los usuarios y contraseñas aquí".
+*   **¿Dónde lo encuentro?**
+    1. Vuelve al panel principal, menú de la izquierda, y ve a "Storage & databases" (Almacenamiento y bases de datos) -> "D1".
+    2. Haz clic en "Create database" (Crear base de datos).
+    3. Ponle un nombre, por ejemplo: `warden-db` (o "vault1") y pulsa Create.
+    4. En la pantalla de la base de datos, entra a ella. Busca la sección "Database ID" (ID de base de datos) y copia ese valor.
+
+**4. (Opcional) Crear bucket de R2 y configurar `R2_NAME`**
+*   **¿Qué es y para qué sirve?** Si subes un archivo (ej. una foto o un PDF) a tu gestor de contraseñas, R2 es el disco duro en la nube que lo guardará. Es más rápido y permite archivos más grandes que KV.
+*   **¿Dónde lo encuentro?**
+    1. En el panel izquierdo, ve a "Storage & databases" -> "R2".
+    2. Si es tu primera vez, Cloudflare te pedirá activar R2 (requiere registrar un método de pago, aunque la capa gratuita es muy amplia).
+    3. Haz clic en "Create bucket" (Crear bucket).
+    4. Escribe un nombre único, por ejemplo: `warden-attachments` y créalo.
+    5. El nombre que escribiste (`warden-attachments`) es tu `R2_NAME`.
+
+#### Cómo configurar estos secretos en GitHub y desplegar
+
+Ahora que tienes los datos, vamos a automatizar el despliegue:
+
+1.  Haz un "Fork" de este repositorio a tu cuenta personal de GitHub (arriba a la derecha, botón "Fork").
+2.  Ve a tu nuevo repositorio en GitHub, y navega a **Settings > Secrets and variables > Actions**.
+3.  Haz clic en el botón verde **"New repository secret"** para agregar cada uno de estos datos, uno por uno:
+    *   `Name:` `CLOUDFLARE_ACCOUNT_ID` — `Secret:` Pega tu ID de cuenta.
+    *   `Name:` `CLOUDFLARE_API_TOKEN` — `Secret:` Pega tu token.
+    *   `Name:` `D1_DATABASE_ID` — `Secret:` Pega el ID de tu base de datos D1.
+    *   *(Opcional)* `Name:` `R2_NAME` — `Secret:` Pega el nombre exacto de tu bucket (ej. `warden-attachments`).
+4.  Una vez guardados los secretos, ve a la pestaña **Actions** en tu repositorio de GitHub.
+5.  Si te pide permiso para activar las acciones, haz clic en "I understand my workflows, go ahead and enable them".
+6.  En la barra lateral izquierda, selecciona "Deploy Prod".
+7.  Haz clic a la derecha en "Run workflow", y vuelve a presionar el botón verde "Run workflow".
+8.  Espera unos minutos hasta que termine con éxito. ¡El servidor ya estará desplegado en Cloudflare!
+
+### 2.4 Variables de Entorno Fundamentales (Después de Desplegar)
+
+Una vez que GitHub Actions finalizó el despliegue con éxito, el servidor existe en la nube, pero todavía necesita claves de seguridad maestras para funcionar y generar las sesiones de los usuarios.
+
+Debes entrar nuevamente a [Cloudflare](https://dash.cloudflare.com/):
+
+1. Ve a "Workers & Pages".
+2. Haz clic sobre tu Worker recién desplegado (probablemente se llame `warden-worker`).
+3. Ve a la pestaña **Settings** (Configuración) y en el menú lateral de configuración selecciona **Variables and Secrets**.
+4. En la sección "Secrets", haz clic en "Add" para agregar las siguientes variables:
+
+*   `ALLOWED_EMAILS`: ¿Quién puede registrarse? (ej. escribe `tu@email.com` si solo la usas tú, o `*@tudominio.com` si tienes un dominio propio para tu familia/empresa). Protege el servidor de registros públicos indeseados.
+*   `JWT_SECRET`: Una cadena de texto aleatoria muy larga e impredecible (ej. `a98db25...`). Sirve para cifrar y firmar los tokens de sesión; si alguien no tiene esto, no puede generar accesos válidos.
+*   `JWT_REFRESH_SECRET`: Otra cadena de texto aleatoria y larga distinta a la anterior. Sirve para renovar las sesiones de forma segura sin tener que volver a ingresar la contraseña maestra.
+
+> **Importante:** Si no configuras estas tres variables y guardas los cambios en Cloudflare, el servidor no iniciará y la app móvil/web dará un error.
 
 ---
 
